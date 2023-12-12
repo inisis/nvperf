@@ -3,6 +3,8 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cublasLt.h>
+#include <cuda_fp8.h>
 
 
 struct GpuTimer
@@ -205,6 +207,107 @@ bool int8_perf()
   return 0;
 }
 
+bool fp8_perf()
+{   
+    float alpha = 2.0, beta = 0.0;
+    float AscaleHost=2.0, BscaleHost=0.5, CscaleHost=1.0, DscaleHost=1.0, DamaxHost;
+    float *a_scale, *b_scale, *c_scale, *d_scale, *amax_d;
+    cublasOperation_t transa = CUBLAS_OP_T;
+    cublasOperation_t transb = CUBLAS_OP_N;
+    cublasStatus_t stat = CUBLAS_STATUS_SUCCESS;
+    __nv_fp8_e4m3 *A, *B, *D;
+    int dim = 16384;
+    int m = dim;
+    int n = dim;
+    int k = dim;    
+    int lda = (transa == CUBLAS_OP_N) ? max (1, m) : max (1, k);
+    int ldb = (transb == CUBLAS_OP_N) ? max (1, k) : max (1, n);
+    int ldc = max (1, m);    
+    cublasLtMatmulDesc_t operationDesc = NULL;
+    cublasLtMatrixLayout_t Adesc = NULL, Bdesc = NULL, Cdesc = NULL, Ddesc = NULL;
+    cublasLtMatmulPreference_t preference = NULL;
+    void *workspace;
+    size_t workspaceSize = 12ULL * 1024 * 1024 * 1024;
+    cublasLtHandle_t ltHandle;
+    int returnedResults                             = 0;
+    cublasLtMatmulHeuristicResult_t heuristicResult = {};
+
+    cublasLtCreate(&ltHandle);
+    cudaMalloc(reinterpret_cast<void**>(&A), m * k * sizeof(__nv_fp8_e4m3));
+    cudaMalloc(reinterpret_cast<void**>(&B), n * k * sizeof(__nv_fp8_e4m3));
+    cudaMalloc(reinterpret_cast<void**>(&D), m * n * sizeof(__nv_fp8_e4m3));
+    cudaMalloc(&workspace, workspaceSize);
+    cudaMalloc(reinterpret_cast<void**>(&a_scale), sizeof(*a_scale));
+    cudaMalloc(reinterpret_cast<void**>(&b_scale), sizeof(*b_scale));
+    cudaMalloc(reinterpret_cast<void**>(&c_scale), sizeof(*c_scale));
+    cudaMalloc(reinterpret_cast<void**>(&d_scale), sizeof(*d_scale));
+    cudaMalloc(reinterpret_cast<void**>(&amax_d), sizeof(*amax_d));
+
+    std::vector<__nv_fp8_e4m3> Ahost(m*k), Bhost(n*k);
+    std::vector<__nv_fp8_e4m3> Chost(m*n), biasHost(m);
+    for (int i = 0; i < m * k; i++) Ahost[i] = __nv_fp8_e4m3(i);
+    for (int i = 0; i < n * k; i++) Bhost[i] = __nv_fp8_e4m3(i);
+    for (int i = 0; i < m; i++) biasHost[i] = __nv_fp8_e4m3(i + 1);
+
+    cudaMemcpyAsync(A, Ahost.data(), Ahost.size() * sizeof(Ahost[0]), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(B, Bhost.data(), Bhost.size() * sizeof(Bhost[0]), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(a_scale, &AscaleHost, sizeof(AscaleHost), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(b_scale, &BscaleHost, sizeof(BscaleHost), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(c_scale, &CscaleHost, sizeof(CscaleHost), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_scale, &DscaleHost, sizeof(DscaleHost), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(amax_d, &DamaxHost, sizeof(DamaxHost), cudaMemcpyHostToDevice);
+
+    // create operation desciriptor; see cublasLtMatmulDescAttributes_t for details about defaults; here we just need to
+    // set the transforms for A and B
+    cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F);
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transa));
+
+    // set scaling factors
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale));
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale));
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale));
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale));
+    cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_AMAX_D_POINTER, &amax_d, sizeof(amax_d));
+
+    // create matrix descriptors, we are good with the details here so no need to set any extra attributes
+    // table of supported type combinations can be found in the documentation: https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmul
+    cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_8F_E4M3, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda);
+    cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_8F_E4M3, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb);
+    cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_16BF, m, n, ldc);
+    cublasLtMatrixLayoutCreate(&Ddesc, CUDA_R_8F_E4M3, m, n, ldc);
+
+    // create preference handle; here we could use extra attributes to disable tensor ops or to make sure algo selected
+    // will work with badly aligned A, B, C; here for simplicity we just assume A,B,C are always well aligned (e.g.
+    // directly come from cudaMalloc)
+    cublasLtMatmulPreferenceCreate(&preference);
+    cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize));
+
+    // we just need the best available heuristic to try and run matmul. There is no guarantee this will work, e.g. if A
+    // is badly aligned, you can request more (e.g. 32) algos and try to run them one by one until something works
+    cublasLtMatmulAlgoGetHeuristic(ltHandle, operationDesc, Adesc, Bdesc, Cdesc, Ddesc, preference, 1, &heuristicResult, &returnedResults);
+
+    GpuTimer timer;
+    timer.Start();
+
+    stat = cublasLtMatmul(ltHandle, operationDesc, &alpha, A, Adesc, B, Bdesc, &beta,
+                          nullptr, Cdesc, D, Ddesc, &heuristicResult.algo,
+                          workspace, workspaceSize, 0);
+    
+    cudaDeviceSynchronize();
+    timer.Stop();
+
+    auto elapsed = timer.Elapsed();
+    auto tflop = 2.0e-9 * m * n *k;
+
+    printf("Implemented CUDA code ran in: %f msecs.\n", elapsed);
+    printf("Performance: %f TFLOPS\n", tflop / elapsed);
+    // cudaError_t err = cudaGetLastError();
+    // std::cout << cudaGetErrorString(err) << std::endl;
+
+  return 0;
+}
+
 
 extern "C" bool runPerf(int device_id)
 {   
@@ -246,6 +349,7 @@ extern "C" bool runPerf(int device_id)
     status = float32_perf(true);
     status = float16_perf();
     status = int8_perf();
+    status = fp8_perf();
 
     return status;
 }
