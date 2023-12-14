@@ -59,7 +59,7 @@ struct GpuTimer
 };
 
 
-bool float32_perf(bool use_tensorcode)
+double float32_perf(bool use_tensorcode)
 {
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_T;
@@ -99,16 +99,13 @@ bool float32_perf(bool use_tensorcode)
     timer.Stop();
 
     auto elapsed = timer.Elapsed();
-    auto tflop = 2.0e-9 * m * n *k;
+    auto tflop = 2.0e-9 * m * n * k / elapsed;
 
-    printf("Implemented CUDA code ran in: %f msecs.\n", timer.Elapsed());
-    printf("Performance: %f TFLOPS\n", tflop / elapsed);
-
-    return EXIT_SUCCESS;
+    return tflop;
 }
 
 
-bool float16_perf()
+double float16_perf()
 {
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_T;
@@ -144,16 +141,13 @@ bool float16_perf()
     timer.Stop();
 
     auto elapsed = timer.Elapsed();
-    auto tflop = 2.0e-9 * m * n *k;
+    auto tflop = 2.0e-9 * m * n * k / elapsed;
 
-    printf("Implemented CUDA code ran in: %f msecs.\n", elapsed);
-    printf("Performance: %f TFLOPS\n", tflop / elapsed);
-
-    return EXIT_SUCCESS;
+    return tflop;
 }
 
 
-bool int8_perf()
+double int8_perf()
 {
     using mt = char;
     using rt = int;
@@ -186,16 +180,13 @@ bool int8_perf()
     timer.Stop();
 
     auto elapsed = timer.Elapsed();
-    auto tflop = 2.0e-9 * m * n *k;
+    auto tflop = 2.0e-9 * m * n * k / elapsed;
 
-    printf("Implemented CUDA code ran in: %f msecs.\n", elapsed);
-    printf("Performance: %f TFLOPS\n", tflop / elapsed);
-
-  return 0;
+    return tflop;
 }
 
 
-bool fp8_perf()
+double fp8_perf()
 {   
     float alpha = 2.0, beta = 0.0;
     float *a_scale, *b_scale, *c_scale, *d_scale, *amax_d;
@@ -274,10 +265,10 @@ bool fp8_perf()
     timer.Stop();
 
     auto elapsed = timer.Elapsed();
-    auto tflop = 2.0e-9 * m * n *k;
+    auto tflop = 2.0e-9 * m * n * k / elapsed;
 
     printf("Implemented CUDA code ran in: %f msecs.\n", elapsed);
-    printf("Performance: %f TFLOPS\n", tflop / elapsed);
+    printf("Performance: %f TFLOPS\n", tflop);
     // cudaError_t err = cudaGetLastError();
     // std::cout << cudaGetErrorString(err) << std::endl;
 
@@ -285,10 +276,7 @@ bool fp8_perf()
 }
 
 
-extern "C" bool runPerf(int device_id)
-{   
-    bool status = true;
-    
+extern "C" bool runPerf(int device_id){ 
     cudaSetDevice(device_id);
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, device_id);
@@ -321,12 +309,11 @@ extern "C" bool runPerf(int device_id)
            memoryClock * 1e-3f);
 #endif
 
+    printf("fp32 without tensorcore: %f TFLOPS\n", float32_perf(false));
+    printf("fp32 with    tensorcore: %f TFLOPS\n", float32_perf(true));
+    printf("fp16 with    tensorcore: %f TFLOPS\n", float16_perf());
+    printf("int8 with    tensorcore: %f TFLOPS\n", int8_perf());
+    printf("fp8  with    tensorcore: %f TFLOPS\n", fp8_perf());
 
-    status = float32_perf(false);
-    status = float32_perf(true);
-    status = float16_perf();
-    status = int8_perf();
-    status = fp8_perf();
-
-    return status;
+    return 0;
 }
