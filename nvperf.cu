@@ -7,20 +7,28 @@
 #include <cuda_fp8.h>
 
 
-inline void checkCudaStatus(cudaError_t status) {
-    if (status != cudaSuccess) {
-        printf("cuda API failed with status %d: %s\n", status, cudaGetErrorString(status));
-        throw std::logic_error("cuda API failed");
-    }
-}
+#define CHECK_CUDA_STATUS(call)                                                                                        \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        cudaError_t status = call;                                                                                     \
+        if (status != cudaSuccess)                                                                                     \
+        {                                                                                                              \
+            printf("cuda API failed with status %d: %s\n", status, cudaGetErrorString(status));                        \
+            return -1;                                                                                             \
+        }                                                                                                              \
+    } while (0)
 
-inline void checkCublasStatus(cublasStatus_t status) {
-    if (status != CUBLAS_STATUS_SUCCESS) {
-        printf("cuBLAS API failed with status %d\n", status);
-        throw std::logic_error("cuBLAS API failed");
-    }
-}
 
+#define CHECK_CUBLAS_STATUS(call)                                                                                       \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        cublasStatus_t status = call;                                                                                   \
+        if (status != CUBLAS_STATUS_SUCCESS)                                                                            \
+        {                                                                                                              \
+            printf("cuBLAS API failed with status %d: %s\n", status, cublasGetStatusString(status));                   \
+            return -1;                                                                                             \
+        }                                                                                                              \
+    } while (0)
 
 struct GpuTimer
 {
@@ -70,11 +78,11 @@ double float32_perf(bool use_tensorcode)
     float beta = 0.0f;
 
     cublasHandle_t handle;
-    checkCublasStatus(cublasCreate(&handle));
+    CHECK_CUBLAS_STATUS(cublasCreate(&handle));
 
     if(use_tensorcode==true)
     {
-        checkCublasStatus(cublasSetMathMode(handle, CUBLAS_TF32_TENSOR_OP_MATH));
+        CHECK_CUBLAS_STATUS(cublasSetMathMode(handle, CUBLAS_TF32_TENSOR_OP_MATH));
     }
 
     int lda = (transa == CUBLAS_OP_N) ? max (1, m) : max (1, k);
@@ -87,14 +95,14 @@ double float32_perf(bool use_tensorcode)
     size_t Bsz = (size_t)ldb * kb * sizeof (float);
     size_t Csz = (size_t)ldc * n  * sizeof (float);
     float *A_d = 0, *B_d = 0, *C_d = 0;
-    checkCudaStatus(cudaMalloc((void**)&A_d, Asz));
-    checkCudaStatus(cudaMalloc((void**)&B_d, Bsz));
-    checkCudaStatus(cudaMalloc((void**)&C_d, Csz));
+    CHECK_CUDA_STATUS(cudaMalloc((void**)&A_d, Asz));
+    CHECK_CUDA_STATUS(cudaMalloc((void**)&B_d, Bsz));
+    CHECK_CUDA_STATUS(cudaMalloc((void**)&C_d, Csz));
 
     GpuTimer timer;
 
     timer.Start();    
-    checkCublasStatus(cublasSgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
+    CHECK_CUBLAS_STATUS(cublasSgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
     cudaDeviceSynchronize();
     timer.Stop();
 
@@ -116,8 +124,8 @@ double float16_perf()
     __half beta = 0.0f;
 
     cublasHandle_t handle;
-    checkCublasStatus(cublasCreate(&handle));
-    checkCublasStatus(cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH));
+    CHECK_CUBLAS_STATUS(cublasCreate(&handle));
+    CHECK_CUBLAS_STATUS(cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH));
 
     int lda = (transa == CUBLAS_OP_N) ? max (1, m) : max (1, k);
     int ldb = (transb == CUBLAS_OP_N) ? max (1, k) : max (1, n);
@@ -129,14 +137,14 @@ double float16_perf()
     size_t Bsz = (size_t)ldb * kb * sizeof (__half);
     size_t Csz = (size_t)ldc * n  * sizeof (__half);
     __half *A_d = 0, *B_d = 0, *C_d = 0;
-    checkCudaStatus(cudaMalloc((void**)&A_d, Asz));
-    checkCudaStatus(cudaMalloc((void**)&B_d, Bsz));
-    checkCudaStatus(cudaMalloc((void**)&C_d, Csz));
+    CHECK_CUDA_STATUS(cudaMalloc((void**)&A_d, Asz));
+    CHECK_CUDA_STATUS(cudaMalloc((void**)&B_d, Bsz));
+    CHECK_CUDA_STATUS(cudaMalloc((void**)&C_d, Csz));
 
     GpuTimer timer;
 
     timer.Start();    
-    checkCublasStatus(cublasHgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
+    CHECK_CUBLAS_STATUS(cublasHgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
     cudaDeviceSynchronize();
     timer.Stop();
 
@@ -162,9 +170,9 @@ double int8_perf()
     int k = dim;
     mt *A, *B;
     rt *C;
-    checkCudaStatus(cudaMalloc(&A, sizeof(A[0])*m*k));
-    checkCudaStatus(cudaMalloc(&B, sizeof(B[0])*n*k));
-    checkCudaStatus(cudaMalloc(&C, sizeof(C[0])*m*n));
+    CHECK_CUDA_STATUS(cudaMalloc(&A, sizeof(A[0])*m*k));
+    CHECK_CUDA_STATUS(cudaMalloc(&B, sizeof(B[0])*n*k));
+    CHECK_CUDA_STATUS(cudaMalloc(&C, sizeof(C[0])*m*n));
     st alpha = 1;
     st beta = 0;
     cublasHandle_t h;
@@ -173,7 +181,7 @@ double int8_perf()
     GpuTimer timer;
     timer.Start();
 
-    checkCublasStatus(cublasGemmEx(h, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, A, Atype, dim, 
+    CHECK_CUBLAS_STATUS(cublasGemmEx(h, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, A, Atype, dim, 
                         B, Atype, dim, &beta, C, Ctype, dim, computeType, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     
     cudaDeviceSynchronize();
@@ -209,55 +217,55 @@ double fp8_perf()
     int returnedResults                             = 0;
     cublasLtMatmulHeuristicResult_t heuristicResult = {};
 
-    checkCublasStatus(cublasLtCreate(&ltHandle));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&A), m * k * sizeof(__nv_fp8_e4m3)));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&B), n * k * sizeof(__nv_fp8_e4m3)));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&D), m * n * sizeof(__nv_fp8_e4m3)));
-    checkCudaStatus(cudaMalloc(&workspace, workspaceSize));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&a_scale), sizeof(*a_scale)));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&b_scale), sizeof(*b_scale)));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&c_scale), sizeof(*c_scale)));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&d_scale), sizeof(*d_scale)));
-    checkCudaStatus(cudaMalloc(reinterpret_cast<void**>(&amax_d), sizeof(*amax_d)));
+    CHECK_CUBLAS_STATUS(cublasLtCreate(&ltHandle));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&A), m * k * sizeof(__nv_fp8_e4m3)));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&B), n * k * sizeof(__nv_fp8_e4m3)));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&D), m * n * sizeof(__nv_fp8_e4m3)));
+    CHECK_CUDA_STATUS(cudaMalloc(&workspace, workspaceSize));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&a_scale), sizeof(*a_scale)));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&b_scale), sizeof(*b_scale)));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&c_scale), sizeof(*c_scale)));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&d_scale), sizeof(*d_scale)));
+    CHECK_CUDA_STATUS(cudaMalloc(reinterpret_cast<void**>(&amax_d), sizeof(*amax_d)));
 
     // create operation desciriptor; see cublasLtMatmulDescAttributes_t for details about defaults; here we just need to
     // set the transforms for A and B
-    checkCublasStatus(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transa)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transa)));
 
     // set scaling factors
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_AMAX_D_POINTER, &amax_d, sizeof(amax_d)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_AMAX_D_POINTER, &amax_d, sizeof(amax_d)));
 
     // create matrix descriptors, we are good with the details here so no need to set any extra attributes
     // table of supported type combinations can be found in the documentation: https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmul
-    checkCublasStatus(cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_8F_E4M3, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda));
-    checkCublasStatus(cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_8F_E4M3, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb));
-    checkCublasStatus(cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_16BF, m, n, ldc));
-    checkCublasStatus(cublasLtMatrixLayoutCreate(&Ddesc, CUDA_R_8F_E4M3, m, n, ldc));
+    CHECK_CUBLAS_STATUS(cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_8F_E4M3, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda));
+    CHECK_CUBLAS_STATUS(cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_8F_E4M3, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb));
+    CHECK_CUBLAS_STATUS(cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_16BF, m, n, ldc));
+    CHECK_CUBLAS_STATUS(cublasLtMatrixLayoutCreate(&Ddesc, CUDA_R_8F_E4M3, m, n, ldc));
 
     // create preference handle; here we could use extra attributes to disable tensor ops or to make sure algo selected
     // will work with badly aligned A, B, C; here for simplicity we just assume A,B,C are always well aligned (e.g.
     // directly come from cudaMalloc)
-    checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
-    checkCublasStatus(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize)));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulPreferenceCreate(&preference));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize)));
 
     // we just need the best available heuristic to try and run matmul. There is no guarantee this will work, e.g. if A
     // is badly aligned, you can request more (e.g. 32) algos and try to run them one by one until something works
-    checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, operationDesc, Adesc, Bdesc, Cdesc, Ddesc, preference, 1, &heuristicResult, &returnedResults));
+    CHECK_CUBLAS_STATUS(cublasLtMatmulAlgoGetHeuristic(ltHandle, operationDesc, Adesc, Bdesc, Cdesc, Ddesc, preference, 1, &heuristicResult, &returnedResults));
 
     if (returnedResults == 0) {
-        checkCublasStatus(CUBLAS_STATUS_NOT_SUPPORTED);
+        CHECK_CUBLAS_STATUS(CUBLAS_STATUS_NOT_SUPPORTED);
     }
 
     GpuTimer timer;
     timer.Start();
 
-    checkCublasStatus(cublasLtMatmul(ltHandle, operationDesc, &alpha, A, Adesc, B, Bdesc, &beta,
+    CHECK_CUBLAS_STATUS(cublasLtMatmul(ltHandle, operationDesc, &alpha, A, Adesc, B, Bdesc, &beta,
                           nullptr, Cdesc, D, Ddesc, &heuristicResult.algo,
                           workspace, workspaceSize, 0));
     
@@ -267,12 +275,7 @@ double fp8_perf()
     auto elapsed = timer.Elapsed();
     auto tflop = 2.0e-9 * m * n * k / elapsed;
 
-    printf("Implemented CUDA code ran in: %f msecs.\n", elapsed);
-    printf("Performance: %f TFLOPS\n", tflop);
-    // cudaError_t err = cudaGetLastError();
-    // std::cout << cudaGetErrorString(err) << std::endl;
-
-  return 0;
+    return tflop;
 }
 
 
