@@ -6,8 +6,8 @@
 #include <cublasLt.h>
 #include <cuda_fp8.h>
 
-#define WARMUP_ITER 10
-#define ITER 50
+#define WARMUP_ITER 5
+#define ITER 20
 
 #define CHECK_CUDA_STATUS(call)                                                                                        \
     do                                                                                                                 \
