@@ -6,6 +6,8 @@
 #include <cublasLt.h>
 #include <cuda_fp8.h>
 
+#define WARMUP_ITER 10
+#define ITER 50
 
 #define CHECK_CUDA_STATUS(call)                                                                                        \
     do                                                                                                                 \
@@ -101,12 +103,21 @@ double float32_perf(bool use_tensorcode)
 
     GpuTimer timer;
 
-    timer.Start();    
-    CHECK_CUBLAS_STATUS(cublasSgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
-    cudaDeviceSynchronize();
+    // Warm-up phase
+    for (int warmup_iter = 0; warmup_iter < WARMUP_ITER; ++warmup_iter) {
+        CHECK_CUBLAS_STATUS(cublasSgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
+        cudaDeviceSynchronize();
+    }
+
+    // Actual measurement phase
+    timer.Start();
+    for (int iter = 0; iter < ITER; ++iter) {
+        CHECK_CUBLAS_STATUS(cublasSgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
+        cudaDeviceSynchronize();
+    }
     timer.Stop();
 
-    auto elapsed = timer.Elapsed();
+    auto elapsed = timer.Elapsed() / ITER;
     auto tflop = 2.0e-9 * m * n * k / elapsed;
 
     return tflop;
@@ -141,14 +152,21 @@ double float16_perf()
     CHECK_CUDA_STATUS(cudaMalloc((void**)&B_d, Bsz));
     CHECK_CUDA_STATUS(cudaMalloc((void**)&C_d, Csz));
 
-    GpuTimer timer;
+    for (int warmup_iter = 0; warmup_iter < WARMUP_ITER; ++warmup_iter) {
+        CHECK_CUBLAS_STATUS(cublasHgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
+        cudaDeviceSynchronize();
+    }
 
-    timer.Start();    
-    CHECK_CUBLAS_STATUS(cublasHgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
-    cudaDeviceSynchronize();
+    GpuTimer timer;
+    // Actual measurement phase
+    timer.Start();
+    for (int iter = 0; iter < ITER; ++iter) {
+        CHECK_CUBLAS_STATUS(cublasHgemm(handle, transa, transb, m, n, k, &alpha, A_d, lda, B_d, ldb, &beta, C_d, ldc));
+        cudaDeviceSynchronize();
+    }
     timer.Stop();
 
-    auto elapsed = timer.Elapsed();
+    auto elapsed = timer.Elapsed() / ITER;
     auto tflop = 2.0e-9 * m * n * k / elapsed;
 
     return tflop;
@@ -178,16 +196,23 @@ double int8_perf()
     cublasHandle_t h;
     cublasStatus_t stat = cublasCreate(&h);
 
-    GpuTimer timer;
-    timer.Start();
-
-    CHECK_CUBLAS_STATUS(cublasGemmEx(h, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, A, Atype, dim, 
+    for (int warmup_iter = 0; warmup_iter < WARMUP_ITER; ++warmup_iter) {
+        CHECK_CUBLAS_STATUS(cublasGemmEx(h, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, A, Atype, dim, 
                         B, Atype, dim, &beta, C, Ctype, dim, computeType, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
-    
-    cudaDeviceSynchronize();
+        cudaDeviceSynchronize();
+    }
+
+    GpuTimer timer;
+    // Actual measurement phase
+    timer.Start();
+    for (int iter = 0; iter < ITER; ++iter) {
+        CHECK_CUBLAS_STATUS(cublasGemmEx(h, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, A, Atype, dim, 
+                        B, Atype, dim, &beta, C, Ctype, dim, computeType, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+        cudaDeviceSynchronize();
+    }
     timer.Stop();
 
-    auto elapsed = timer.Elapsed();
+    auto elapsed = timer.Elapsed() / ITER;
     auto tflop = 2.0e-9 * m * n * k / elapsed;
 
     return tflop;
@@ -262,17 +287,26 @@ double fp8_perf()
         CHECK_CUBLAS_STATUS(CUBLAS_STATUS_NOT_SUPPORTED);
     }
 
-    GpuTimer timer;
-    timer.Start();
 
-    CHECK_CUBLAS_STATUS(cublasLtMatmul(ltHandle, operationDesc, &alpha, A, Adesc, B, Bdesc, &beta,
+    for (int warmup_iter = 0; warmup_iter < WARMUP_ITER; ++warmup_iter) {
+        CHECK_CUBLAS_STATUS(cublasLtMatmul(ltHandle, operationDesc, &alpha, A, Adesc, B, Bdesc, &beta,
                           nullptr, Cdesc, D, Ddesc, &heuristicResult.algo,
                           workspace, workspaceSize, 0));
-    
-    cudaDeviceSynchronize();
+        cudaDeviceSynchronize();
+    }
+
+    GpuTimer timer;
+    // Actual measurement phase
+    timer.Start();
+    for (int iter = 0; iter < ITER; ++iter) {
+        CHECK_CUBLAS_STATUS(cublasLtMatmul(ltHandle, operationDesc, &alpha, A, Adesc, B, Bdesc, &beta,
+                          nullptr, Cdesc, D, Ddesc, &heuristicResult.algo,
+                          workspace, workspaceSize, 0));
+        cudaDeviceSynchronize();
+    }
     timer.Stop();
 
-    auto elapsed = timer.Elapsed();
+    auto elapsed = timer.Elapsed() / ITER;
     auto tflop = 2.0e-9 * m * n * k / elapsed;
 
     return tflop;
