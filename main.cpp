@@ -21,8 +21,6 @@ int main(int argc, char **argv)
         return 1;  // Return an error code
     }
 
-    int defaultDeviceID = 0;
-    int requestedDeviceID = (argc == 2) ? std::stoi(argv[1]) : defaultDeviceID;
 
     if (argc == 2 && (argv[1][0] == '-' || argv[1][0] == '/')) {
         if (argv[1][1] == 'h' || argv[1][1] == 'H') {
@@ -30,6 +28,9 @@ int main(int argc, char **argv)
             return 0;
         }
     }
+
+    int defaultDeviceID = 0;
+    int requestedDeviceID = (argc == 2) ? std::stoi(argv[1]) : defaultDeviceID;
 
     int deviceCount = 0;
     cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
