@@ -1,6 +1,6 @@
 ## nvperf
 
-# Build
+# How to Build
 ```
 make
 ```
